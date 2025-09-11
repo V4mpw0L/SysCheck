@@ -1,6 +1,6 @@
 # 💻 SysCheck
 
-This repository contains a robust and comprehensive Bash script designed to perform a detailed hardware and software diagnosis on Linux systems, with a focus on troubleshooting specific issues like the one reported on an Alienware m17 r2 laptop.
+This repository contains a robust and comprehensive Bash script designed to perform a detailed hardware and software diagnosis on Linux systems, with a focus on troubleshooting specific issues.
 
 The script gathers a wide range of system information, including details about the CPU, GPU, storage, RAM, network devices, and system logs, to help users and technicians identify potential problems.
 
@@ -61,7 +61,7 @@ This project is licensed under the [MIT License](LICENSE).
 
 # 💻 SysCheck
 
-Este repositório contém um script Bash robusto e abrangente, projetado para realizar um diagnóstico detalhado de hardware e software em sistemas Linux, com foco na solução de problemas específicos, como o relatado em um notebook Alienware m17 r2.
+Este repositório contém um script Bash robusto e abrangente, projetado para realizar um diagnóstico detalhado de hardware e software em sistemas Linux, com foco na solução de problemas específicos.
 
 O script coleta uma vasta gama de informações do sistema, incluindo detalhes sobre CPU, GPU, armazenamento, RAM, dispositivos de rede e logs do sistema, para ajudar usuários e técnicos a identificar possíveis problemas.
 
