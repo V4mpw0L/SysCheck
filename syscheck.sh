@@ -254,6 +254,7 @@ if [[ "$CURRENT_LANG" == "pt" ]]; then
     TXT[SUBTITLE]="Gennisys Studio  ●  Auditoria de Infraestrutura & Hardware"
     TXT[MODE_ROOT]="MODO PRIVILEGIADO (ROOT) - DIAGNÓSTICO PROFUNDO ATIVO"
     TXT[MODE_USER]="MODO USUÁRIO (NÃO-ROOT) - EXECUTE COM 'sudo' PARA ACESSO SMART/DMI COMPLETO"
+    TXT[SECTION_BOOT]="00. DETECÇÃO DE PLATAFORMA & DEPENDÊNCIAS"
     TXT[SECTION_SYS]="01. SISTEMA OPERACIONAL & AMBIENTE"
     TXT[SECTION_CPU]="02. PROCESSADOR (CPU) & EFICIÊNCIA TÉRMICA"
     TXT[SECTION_RAM]="03. MEMÓRIA RAM & GERENCIAMENTO DE SWAP"
@@ -264,6 +265,10 @@ if [[ "$CURRENT_LANG" == "pt" ]]; then
     TXT[SECTION_HEALTH]="08. SAÚDE DO SISTEMA, SERVIÇOS & LOGS DE ERRO"
     TXT[SECTION_SUMMARY]="09. PARECER EXECUTIVO & RESUMO DE SAÚDE"
     
+    TXT[PLATFORM_DETECTED]="Plataforma / Sistema"
+    TXT[PKG_MGR_LABEL]="Gerenciador de Pacotes"
+    TXT[TOOLCHAIN_STATUS]="Ferramentas de Diagnóstico"
+    TXT[ACTIVE_SENTINELS]="Sensores Ativos"
     TXT[OS_DISTRO]="Sistema Operacional"
     TXT[KERNEL]="Kernel & Build"
     TXT[HOSTNAME]="Nome da Máquina"
@@ -334,6 +339,7 @@ else
     TXT[SUBTITLE]="Gennisys Studio  ●  Infrastructure & Hardware Audit"
     TXT[MODE_ROOT]="PRIVILEGED MODE (ROOT) - DEEP HARDWARE AUDIT ACTIVE"
     TXT[MODE_USER]="USER MODE (NON-ROOT) - RUN WITH 'sudo' FOR COMPLETE SMART/DMI ACCESS"
+    TXT[SECTION_BOOT]="00. PLATFORM DISCOVERY & DEPENDENCY SENTINEL"
     TXT[SECTION_SYS]="01. OPERATING SYSTEM & ENVIRONMENT"
     TXT[SECTION_CPU]="02. PROCESSOR (CPU) & THERMAL EFFICIENCY"
     TXT[SECTION_RAM]="03. RAM ALLOCATION & SWAP MANAGEMENT"
@@ -344,6 +350,10 @@ else
     TXT[SECTION_HEALTH]="08. SYSTEM HEALTH, FAILED SERVICES & LOGS"
     TXT[SECTION_SUMMARY]="09. EXECUTIVE AUDIT & HEALTH SUMMARY"
     
+    TXT[PLATFORM_DETECTED]="Target Platform"
+    TXT[PKG_MGR_LABEL]="Package Manager"
+    TXT[TOOLCHAIN_STATUS]="Diagnostic Toolchain"
+    TXT[ACTIVE_SENTINELS]="Active Sentinels"
     TXT[OS_DISTRO]="Operating System"
     TXT[KERNEL]="Kernel & Build"
     TXT[HOSTNAME]="Machine Hostname"
@@ -561,128 +571,105 @@ declare -A PKG_ARCH=(
 # ------------------------------------------------------------------------------
 # AUDITORIA & INSTALAÇÃO DE DEPENDÊNCIAS
 # ------------------------------------------------------------------------------
-prompt_missing_dependencies() {
-    if [ "$CHECK_DEPS_ONLY" = true ] || [ "$INSTALL_DEPS_FLAG" = true ] || [ "$SKIP_DEPS_PROMPT" = true ] || [ "$QUICK_MODE" = true ]; then
-        return 0
+audit_bootstrap_platform() {
+    print_section "${TXT[SECTION_BOOT]}"
+    
+    # 1. Platform Details
+    local plat_desc="${OS_NAME}"
+    if [ "$OS_FAMILY" = "linux" ]; then
+        local d_name=""
+        [ -f /etc/os-release ] && d_name=$(source /etc/os-release && echo "${PRETTY_NAME:-$NAME}")
+        plat_desc="${d_name:-Linux} ($(uname -m))"
+    elif [ "$OS_FAMILY" = "macos" ]; then
+        local m_ver m_chip
+        m_ver="$(sw_vers -productVersion 2>/dev/null || echo '')"
+        m_chip="$(sysctl -n machdep.cpu.brand_string 2>/dev/null || echo 'Apple Silicon')"
+        plat_desc="Apple macOS ${m_ver} (${m_chip}) [$(uname -m)]"
+    elif [ "$OS_FAMILY" = "windows" ] || [ "$OS_FAMILY" = "wsl" ]; then
+        plat_desc="Microsoft Windows / WSL ($(uname -m))"
     fi
-
+    print_kv "${TXT[PLATFORM_DETECTED]}" "${plat_desc}"
+    
+    # 2. Package Manager
+    local pm_status="${PKG_MGR_NAME:-None detected (Manual Binary Mode)}"
+    print_kv "${TXT[PKG_MGR_LABEL]}" "${pm_status}"
+    
+    # 3. Toolchain Verification
+    local check_tools=()
+    if [ "$OS_FAMILY" = "macos" ]; then
+        check_tools=(sysctl sw_vers system_profiler diskutil vm_stat networksetup smartctl)
+    elif [ "$OS_FAMILY" = "windows" ]; then
+        check_tools=(powershell.exe cmd.exe smartctl)
+    else
+        check_tools=(lscpu lsblk lspci lsusb sensors smartctl glxinfo vulkaninfo dmidecode ip ping nvidia-smi)
+    fi
+    
+    local found_count=0
+    local total_count=${#check_tools[@]}
     local missing=()
     local missing_pkgs=()
-
-    if [ "$OS_FAMILY" = "linux" ] || [ "$OS_FAMILY" = "wsl" ]; then
-        for cmd in smartctl sensors lspci lsusb dmidecode; do
-            if ! has_cmd "$cmd"; then
-                missing+=("$cmd")
-                case "$PKG_MGR" in
-                    "dnf")
-                        [[ "$cmd" == "sensors" ]] && missing_pkgs+=("lm_sensors") || missing_pkgs+=("${PKG_FEDORA[$cmd]:-$cmd}")
-                        ;;
-                    "apt")
-                        [[ "$cmd" == "sensors" ]] && missing_pkgs+=("lm-sensors") || missing_pkgs+=("${PKG_DEBIAN[$cmd]:-$cmd}")
-                        ;;
-                    "pacman")
-                        missing_pkgs+=("${PKG_ARCH[$cmd]:-$cmd}")
-                        ;;
-                    "zypper")
-                        [[ "$cmd" == "sensors" ]] && missing_pkgs+=("sensors") || missing_pkgs+=("$cmd")
-                        ;;
-                    *)
-                        missing_pkgs+=("$cmd")
-                        ;;
-                esac
-            fi
-        done
-    elif [ "$OS_FAMILY" = "macos" ]; then
-        if ! has_cmd smartctl && has_cmd brew; then
-            missing+=("smartctl")
-            missing_pkgs+=("smartmontools")
-        fi
-    elif [ "$OS_FAMILY" = "windows" ]; then
-        if ! has_cmd smartctl && (has_cmd winget.exe || has_cmd winget); then
-            missing+=("smartctl")
-            missing_pkgs+=("Smartmontools.Smartmontools")
-        fi
-    fi
-
-    if [[ ${#missing[@]} -eq 0 ]]; then
-        return 0
-    fi
-
-    out ""
-    out "  ${C_GOLD}╭────────────────────────────────────────────────────────────────────────╮${C_RESET}"
-    out "  ${C_GOLD}│ ⚡ ${TXT[DEP_PROMPT_TITLE]}      │${C_RESET}"
-    out "  ${C_GOLD}╰────────────────────────────────────────────────────────────────────────╯${C_RESET}"
-    out "  ${C_SLATE}${TXT[DEP_MISSING_INTRO]}${C_RESET} ${C_WHITE}${C_BOLD}${missing[*]}${C_RESET}"
-
-    if [ -n "$PKG_MGR" ] && [[ ${#missing_pkgs[@]} -gt 0 ]]; then
-        out "  ${C_SLATE}${TXT[DEP_MGR_DETECTED]}: ${C_CYAN}${PKG_MGR_NAME}${C_RESET}"
-
-        local install_cmd=""
-        case "$PKG_MGR" in
-            "dnf")
-                [[ $EUID -eq 0 ]] && install_cmd="dnf install -y ${missing_pkgs[*]}" || install_cmd="sudo dnf install -y ${missing_pkgs[*]}"
-                ;;
-            "apt")
-                [[ $EUID -eq 0 ]] && install_cmd="apt-get update && apt-get install -y ${missing_pkgs[*]}" || install_cmd="sudo apt-get update && sudo apt-get install -y ${missing_pkgs[*]}"
-                ;;
-            "pacman")
-                [[ $EUID -eq 0 ]] && install_cmd="pacman -Sy --noconfirm ${missing_pkgs[*]}" || install_cmd="sudo pacman -Sy --noconfirm ${missing_pkgs[*]}"
-                ;;
-            "zypper")
-                [[ $EUID -eq 0 ]] && install_cmd="zypper install -y ${missing_pkgs[*]}" || install_cmd="sudo zypper install -y ${missing_pkgs[*]}"
-                ;;
-            "apk")
-                [[ $EUID -eq 0 ]] && install_cmd="apk add ${missing_pkgs[*]}" || install_cmd="sudo apk add ${missing_pkgs[*]}"
-                ;;
-            "brew")
-                install_cmd="brew install ${missing_pkgs[*]}"
-                ;;
-            "winget")
-                install_cmd="winget install ${missing_pkgs[*]} --accept-source-agreements --accept-package-agreements"
-                ;;
-            "choco")
-                install_cmd="choco install ${missing_pkgs[*]} -y"
-                ;;
-        esac
-
-        out "  ${C_SLATE}${TXT[DEP_PROPOSED_CMD]}: ${C_WHITE}${install_cmd}${C_RESET}"
-        out ""
-
-        local do_install=false
-        if [ "$AUTO_CONFIRM_DEPS" = true ]; then
-            do_install=true
-        elif [ -t 0 ] && [ -t 1 ]; then
-            printf "  ${C_CYAN}▸ %s [S/n (Y/n)]: ${C_RESET}" "${TXT[DEP_ASK_INSTALL]}"
-            local reply=""
-            read -r reply </dev/tty || reply=""
-            case "$reply" in
-                [yY]|[yY][eE][sS]|[sS]|[sS][iI][mM]|"")
-                    do_install=true
-                    ;;
-                *)
-                    do_install=false
-                    ;;
+    
+    for cmd in "${check_tools[@]}"; do
+        if has_cmd "$cmd"; then
+            ((found_count++)) || true
+        else
+            missing+=("$cmd")
+            case "$PKG_MGR" in
+                "dnf") missing_pkgs+=("${PKG_FEDORA[$cmd]:-$cmd}") ;;
+                "apt") missing_pkgs+=("${PKG_DEBIAN[$cmd]:-$cmd}") ;;
+                "pacman") missing_pkgs+=("${PKG_ARCH[$cmd]:-$cmd}") ;;
+                *) missing_pkgs+=("$cmd") ;;
             esac
         fi
-
-        if [ "$do_install" = true ]; then
-            out ""
-            out "  ${C_CYAN}⚡ [INSTALLING] Executing: ${install_cmd}...${C_RESET}"
-            if eval "$install_cmd"; then
-                out "  ${C_EMERALD}✔ [SUCCESS] Dependencies installed! Proceeding to audit...${C_RESET}"
-                out ""
-                sleep 1
-            else
-                out "  ${C_GOLD}▲ [NOTICE] Installation exited with warnings. Proceeding with audit...${C_RESET}"
-                out ""
-            fi
-        else
-            out "  ${C_SLATE}▸ ${TXT[DEP_SKIPPED]}${C_RESET}"
-            out ""
-        fi
+    done
+    
+    if [[ ${#missing[@]} -eq 0 ]]; then
+        print_kv "${TXT[TOOLCHAIN_STATUS]}" "${C_EMERALD}${found_count}/${total_count} Verified [OPTIMAL - 100% READY]${C_RESET}"
+        out "    ${C_DARK}└─${C_RESET} ${C_SLATE}${TXT[ACTIVE_SENTINELS]}:${C_RESET} ${C_EMERALD}smartctl  ●  sensors  ●  lspci  ●  lsusb  ●  dmidecode  ●  nvidia-smi${C_RESET}"
     else
-        out "  ${C_DIM}▸ ${TXT[DEP_MANUAL_NOTE]}${C_RESET}"
-        out ""
+        print_kv "${TXT[TOOLCHAIN_STATUS]}" "${C_GOLD}${found_count}/${total_count} Detected (${#missing[@]} Missing)${C_RESET}"
+        out "    ${C_DARK}└─${C_RESET} ${C_GOLD}Missing optional tools:${C_RESET} ${C_WHITE}${missing[*]}${C_RESET}"
+        
+        # Interactive install prompt
+        if [ "$SKIP_DEPS_PROMPT" != true ] && [ "$QUICK_MODE" != true ] && [ -n "$PKG_MGR" ] && [[ ${#missing_pkgs[@]} -gt 0 ]]; then
+            local install_cmd=""
+            case "$PKG_MGR" in
+                "dnf") [[ $EUID -eq 0 ]] && install_cmd="dnf install -y ${missing_pkgs[*]}" || install_cmd="sudo dnf install -y ${missing_pkgs[*]}" ;;
+                "apt") [[ $EUID -eq 0 ]] && install_cmd="apt-get update && apt-get install -y ${missing_pkgs[*]}" || install_cmd="sudo apt-get update && sudo apt-get install -y ${missing_pkgs[*]}" ;;
+                "pacman") [[ $EUID -eq 0 ]] && install_cmd="pacman -Sy --noconfirm ${missing_pkgs[*]}" || install_cmd="sudo pacman -Sy --noconfirm ${missing_pkgs[*]}" ;;
+                "zypper") [[ $EUID -eq 0 ]] && install_cmd="zypper install -y ${missing_pkgs[*]}" || install_cmd="sudo zypper install -y ${missing_pkgs[*]}" ;;
+                "brew") install_cmd="brew install ${missing_pkgs[*]}" ;;
+                "winget") install_cmd="winget install ${missing_pkgs[*]}" ;;
+            esac
+            
+            out ""
+            out "  ${C_CYAN}▸ ${TXT[DEP_PROPOSED_CMD]}:${C_RESET} ${C_WHITE}${C_BOLD}${install_cmd}${C_RESET}"
+            
+            local do_install=false
+            if [ "$AUTO_CONFIRM_DEPS" = true ]; then
+                do_install=true
+            elif [ -t 0 ] && [ -t 1 ]; then
+                printf "  ${C_CYAN}▸ %s [S/n (Y/n)]: ${C_RESET}" "${TXT[DEP_ASK_INSTALL]}"
+                local reply=""
+                read -r reply </dev/tty || reply=""
+                case "$reply" in
+                    [yY]|[yY][eE][sS]|[sS]|[sS][iI][mM]|"") do_install=true ;;
+                    *) do_install=false ;;
+                esac
+            fi
+            
+            if [ "$do_install" = true ]; then
+                out ""
+                out "  ${C_CYAN}⚡ Executing: ${install_cmd}...${C_RESET}"
+                if eval "$install_cmd"; then
+                    out "  ${C_EMERALD}✔ Dependencies installed! Continuing audit...${C_RESET}"
+                else
+                    out "  ${C_GOLD}▲ Package install returned an exit code. Continuing...${C_RESET}"
+                fi
+            else
+                out "  ${C_SLATE}▸ ${TXT[DEP_SKIPPED]}${C_RESET}"
+            fi
+        fi
     fi
 }
 
@@ -1372,7 +1359,15 @@ audit_storage() {
                 [ -n "$hours" ] && metrics+=("Power Hours: $(printf "%'d" "$hours" 2>/dev/null || echo "$hours")")
                 
                 if [[ ${#metrics[@]} -gt 0 ]]; then
-                    out "      SSD Life Used  : $(IFS='  ●  '; echo "${metrics[*]}")"
+                    local join_metrics=""
+                    for m in "${metrics[@]}"; do
+                        if [ -z "$join_metrics" ]; then
+                            join_metrics="$m"
+                        else
+                            join_metrics="${join_metrics}  ●  ${m}"
+                        fi
+                    done
+                    out "      SSD Life Used  : ${join_metrics}"
                 fi
             done
         fi
@@ -1635,10 +1630,8 @@ main() {
         exit 0
     fi
 
-    # Interactive or automatic dependency prompt before execution
-    prompt_missing_dependencies
-
     print_banner
+    audit_bootstrap_platform
     audit_system
     audit_cpu
     audit_ram
