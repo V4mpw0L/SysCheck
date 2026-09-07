@@ -566,7 +566,19 @@ audit_system() {
     fi
     print_kv "${TXT[INIT_SYS]}" "${init_sys}"
     
-    local session_env="${XDG_CURRENT_DESKTOP:-Standard} (${XDG_SESSION_TYPE:-TTY})"
+    local desktop="${XDG_CURRENT_DESKTOP:-}"
+    local session_type="${XDG_SESSION_TYPE:-}"
+    if [[ -z "$desktop" || "$desktop" == "Standard" ]] && [[ -n "$SUDO_USER" ]] && has_cmd loginctl; then
+        local user_sess
+        user_sess=$(loginctl list-sessions --no-legend 2>/dev/null | awk -v u="$SUDO_USER" '$3 == u {print $1; exit}')
+        if [[ -n "$user_sess" ]]; then
+            desktop=$(loginctl show-session "$user_sess" -p Desktop --value 2>/dev/null || echo '')
+            session_type=$(loginctl show-session "$user_sess" -p Type --value 2>/dev/null || echo '')
+        fi
+    fi
+    [[ -z "$desktop" ]] && desktop="Standard"
+    [[ -z "$session_type" ]] && session_type="tty"
+    local session_env="${desktop} (${session_type})"
     print_kv "${TXT[DESKTOP_ENV]}" "${session_env}"
     
     # Motherboard & BIOS
@@ -670,7 +682,7 @@ audit_cpu() {
     # Fans Telemetry
     if has_cmd sensors; then
         local fan_info
-        fan_info=$(sensors 2>/dev/null | grep -i "fan" | awk -F: '{gsub(/^[ \t]+|[ \t]+$/, "", $2); print $1": "$2}' | paste -sd " | " -)
+        fan_info=$(sensors 2>/dev/null | grep -i "fan" | sed -E 's/[[:space:]]+/ /g' | awk -F: '{gsub(/^[ \t]+|[ \t]+$/, "", $2); print $1": "$2}' | paste -sd "  │  " -)
         if [ -n "$fan_info" ]; then
             print_kv "${TXT[CPU_FANS]}" "${fan_info}"
         fi
@@ -741,9 +753,14 @@ audit_ram() {
             in_dev && /Size: [0-9]/ {size=$2" "$3}
             in_dev && /Type: / {type=$2}
             in_dev && /Speed: [0-9]/ {speed=$2" "$3}
-            in_dev && /Manufacturer: / {mfr=$2}
+            in_dev && /Manufacturer: / {
+                $1=""
+                sub(/^[ \t]+/, "")
+                mfr=$0
+            }
             in_dev && size && speed {
-                printf "    %s  Slot Module: %s %s @ %s (%s)\n", "\033[38;5;48m✔\033[0m", size, type, speed, mfr
+                mfr_disp = (mfr != "" && mfr != "NO DIMM" && mfr != "Unknown") ? " (" mfr ")" : ""
+                printf "    %s  Slot Module: %s %s @ %s%s\n", "\033[38;5;48m✔\033[0m", size, type, speed, mfr_disp
                 in_dev=0
             }
         ' | while read -r line; do out "$line"; done
