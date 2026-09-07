@@ -682,7 +682,7 @@ audit_cpu() {
     # Fans Telemetry
     if has_cmd sensors; then
         local fan_info
-        fan_info=$(sensors 2>/dev/null | grep -i "fan" | sed -E 's/[[:space:]]+/ /g' | awk -F: '{gsub(/^[ \t]+|[ \t]+$/, "", $2); print $1": "$2}' | paste -sd "  │  " -)
+        fan_info=$(sensors 2>/dev/null | grep -i "fan" | sed -E 's/[[:space:]]+/ /g' | awk -F: '{gsub(/^[ \t]+|[ \t]+$/, "", $2); print $1": "$2}' | paste -sd "|" - | sed 's/|/  │  /g')
         if [ -n "$fan_info" ]; then
             print_kv "${TXT[CPU_FANS]}" "${fan_info}"
         fi
@@ -1047,6 +1047,7 @@ audit_health_logs() {
             out "    ${C_EMERALD}✔ No critical kernel errors in recent dmesg buffer.${C_RESET}"
         else
             for k_line in "${k_errs[@]}"; do
+                [[ -z "${k_line// }" ]] && continue
                 out "    ${C_GOLD}▲ ${k_line}${C_RESET}"
                 record_warn
             done
@@ -1065,6 +1066,7 @@ audit_health_logs() {
             out "    ${C_EMERALD}✔ No priority 3 (err) messages logged recently.${C_RESET}"
         else
             for j_line in "${j_errs[@]}"; do
+                [[ -z "${j_line// }" ]] && continue
                 out "    ${C_SLATE}│${C_RESET} ${j_line}"
             done
         fi
